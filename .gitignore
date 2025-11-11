@@ -1,0 +1,42 @@
+# Dependencias
+node_modules/
+
+# Entornos / secretos
+.env
+.env.*
+*.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Cobertura / pruebas
+coverage/
+.nyc_output/
+
+# Builds / artefactos generados
+dist/
+build/
+.tmp/
+tmp/
+.cache/
+.parcel-cache/
+
+# Bases de datos locales (si usas archivos)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# SO / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Misc
+.eslintcache
+.node_repl_history
