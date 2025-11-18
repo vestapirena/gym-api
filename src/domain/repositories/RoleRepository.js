@@ -1,5 +1,5 @@
 // src/domain/repositories/RoleRepository.js
-const Role = require('../../infrastructure/models/Role');
+const { Role } = require('../../infrastructure/models');
 
 class RoleRepository {
   static async findAllSimple() {

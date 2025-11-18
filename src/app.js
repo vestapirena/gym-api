@@ -1,37 +1,43 @@
-// src/app.js
+// /src/app.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 
 const sequelize = require('./infrastructure/database/sequelize.config');
+// Registra modelos/associations una sola vez:
+require('./infrastructure/models');
 
-// ⚠️ REGISTRA MODELOS UNA SOLA VEZ
-require('./infrastructure/models/Role');
-require('./infrastructure/models/Gym');
-require('./infrastructure/models/User');
+const authRoutes   = require('./app/routes/auth.routes');
+const usersRoutes  = require('./app/routes/users.routes');
+const gymRoutes    = require('./app/routes/gyms.routes');
+const planRoutes   = require('./app/routes/plans.routes');
+const clientRoutes = require('./app/routes/clients.routes');
 
-// Rutas
-const authRoutes = require('./app/routes/auth.routes');      // ya la tenías
-const usersRoutes = require('./app/routes/users.routes');     // nombre distinto para evitar choque
+const validateToken = require('./app/middlewares/validateToken');
+const probe         = require('./app/middlewares/reqProbe');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 
-// Prefijos
-app.use('/api/auth', authRoutes);
-app.use('/api/users', usersRoutes);
+app.use('/api/auth', authRoutes);              // público (login)
 
-// Health
-app.get('/health', (req, res) => res.json({ ok: true }));
+// 🔒 Todo lo de /api* a partir de aquí requiere token y loguea req.user
+app.use('/api', validateToken, probe('AUTH'));
 
-// DB bootstrap
+app.use('/api/users',  usersRoutes);
+app.use('/api/gyms',   gymRoutes);
+app.use('/api/plans',  planRoutes);
+app.use('/api/clients', clientRoutes);
+
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
 (async () => {
   try {
     await sequelize.authenticate();
-    await sequelize.sync(); // crea tablas si no existen
+    await sequelize.sync();
     console.log('DB ready');
   } catch (err) {
     console.error('Error DB:', err.message);

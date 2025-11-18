@@ -10,7 +10,6 @@ const UserController = require('../controllers/UserController');
 
 const router = express.Router();
 
-// Listar
 router.get(
   '/',
   validateToken,
@@ -18,7 +17,6 @@ router.get(
   UserController.list
 );
 
-// Crear (Joi -> email único -> controller)
 router.post(
   '/',
   validateToken,
@@ -28,23 +26,16 @@ router.post(
   UserController.create
 );
 
-// Actualizar
-// Orden importante:
-// 1) enforceUpdatePolicy: quita email y password vacía
-// 2) Joi: valida lo que quedó
-// 3) ensureUniqueEmail('update'): ya no corre si eliminamos email; si por alguna razón
-//    llegara un email, igual checa unicidad consistentemente.
 router.put(
   '/:id',
   validateToken,
   checkRole('admin', 'Administrator', 'Gym Owner'),
-  enforceUpdatePolicy(),
+  enforceUpdatePolicy(),          // quita email, y password vacío
   validateBody(updateUserSchema),
-  ensureUniqueEmail('update'),
+  ensureUniqueEmail('update'),    // por si (contra políticas) llega email, valida unicidad
   UserController.update
 );
 
-// Eliminar
 router.delete(
   '/:id',
   validateToken,

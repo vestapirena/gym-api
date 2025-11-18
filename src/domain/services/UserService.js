@@ -4,11 +4,7 @@ const UserRepository = require('../repositories/UserRepository');
 const RoleRepository = require('../repositories/RoleRepository');
 const GymRepository  = require('../repositories/GymRepository');
 
-// IDs según tu catálogo: 1=Administrator, 2=Gym Owner, 3=Staff
 const ROLE_IDS = { ADMIN: 1, OWNER: 2, STAFF: 3 };
-
-// Comportamiento solicitado: el ADMIN no valida gym_id
-const SKIP_GYM_VALIDATION_FOR_ADMIN = true;
 
 function isAdmin(currentUser) {
   const r = (currentUser?.role || '').toLowerCase();
@@ -16,11 +12,10 @@ function isAdmin(currentUser) {
 }
 
 class UserService {
-  // includeRefs: si es admin/owner y true, retorna refs acordes al alcance
   static async list(params, currentUser) {
     const { includeRefs, ...listParams } = params;
 
-    // Owner solo ve su propio gym
+    // Owner solo ve su gym
     if (!isAdmin(currentUser) && currentUser?.gym_id) {
       listParams.gymId = currentUser.gym_id;
     }
@@ -30,14 +25,14 @@ class UserService {
     if (includeRefs && (isAdmin(currentUser) || currentUser?.role === 'Gym Owner')) {
       if (isAdmin(currentUser)) {
         const [roles, gyms] = await Promise.all([
-          RoleRepository.findAllSimple(),
-          GymRepository.findAllSimple()
+          RoleRepository.findAllSimple?.() ?? [],
+          GymRepository.findAllSimple?.()  ?? [],
         ]);
         return { ...data, refs: { roles, gyms } };
       } else {
         const [roles, gym] = await Promise.all([
-          RoleRepository.findStaffOnlySimple(ROLE_IDS.STAFF),
-          GymRepository.findByIdSimple(currentUser.gym_id)
+          RoleRepository.findStaffOnlySimple?.(ROLE_IDS.STAFF) ?? [],
+          GymRepository.findByIdSimple?.(currentUser.gym_id)   ?? null,
         ]);
         return { ...data, refs: { roles, gyms: gym ? [gym] : [] } };
       }
@@ -46,40 +41,36 @@ class UserService {
     return data;
   }
 
-  // CREATE
-  static async create(payload, currentUser) {
-
+  // === CREATE con respuesta sticky ===
+  static async createAndReturnPage(payload, listParams, currentUser) {
     if (payload.password) {
       payload.password = await bcrypt.hash(payload.password, 10);
     }
 
     if (!isAdmin(currentUser)) {
-      // OWNER: ignorar cualquier role_id / gym_id recibido
+      // OWNER: forza STAFF y su gym
       payload.role_id = ROLE_IDS.STAFF;
       payload.gym_id  = currentUser.gym_id;
     } else {
-      // ADMIN:
-      // Validar rol si lo manda
+      // ADMIN: valida rol si lo envía
       if (payload.role_id && !(await RoleRepository.existsById(payload.role_id))) {
         throw new Error('El rol especificado no existe');
       }
-      // Gym: NO validar (según lo solicitado). Si el gym no existe, lo dejamos en NULL
-      if (!SKIP_GYM_VALIDATION_FOR_ADMIN) {
-        if (payload.gym_id != null && !(await GymRepository.existsById(payload.gym_id))) {
-          throw new Error('El gimnasio especificado no existe');
-        }
-      } else {
-        if (payload.gym_id != null && !(await GymRepository.existsById(payload.gym_id))) {
-          payload.gym_id = null; // prevenir FK error
-        }
+      // ADMIN: si gym_id viene y no existe, deja null para evitar FK inválida
+      if (payload.gym_id != null && !(await GymRepository.existsById(payload.gym_id))) {
+        payload.gym_id = null;
       }
     }
 
-    return UserRepository.create(payload);
+    const created = await UserRepository.create(payload);
+
+    const pageFor = await UserRepository.getPageForId(created.id, listParams);
+    const list = await this.list({ ...listParams, page: pageFor }, currentUser);
+    return { ...list, stickyId: created.id };
   }
 
-  // UPDATE
-  static async update(id, payload, currentUser) {
+  // === UPDATE con respuesta sticky ===
+  static async updateAndReturnPage(id, payload, listParams, currentUser) {
     if (payload.password) {
       payload.password = await bcrypt.hash(payload.password, 10);
     }
@@ -88,44 +79,33 @@ class UserService {
     if (!current) throw new Error('Usuario no encontrado');
 
     if (!isAdmin(currentUser)) {
-      // OWNER: solo usuarios de su gym
       if (currentUser?.gym_id && current.gym_id !== currentUser.gym_id) {
         throw new Error('No autorizado para modificar usuarios de otro gimnasio');
       }
-      // OWNER: ignorar role_id / gym_id (no tronar)
       if ('role_id' in payload) delete payload.role_id;
       if ('gym_id'  in payload) delete payload.gym_id;
-
-      // Blindaje adicional (por si acaso)
       payload.role_id = current.role_id;
       payload.gym_id  = current.gym_id;
     } else {
-      // ADMIN:
-      // Validar rol si lo cambia
       if (payload.role_id && !(await RoleRepository.existsById(payload.role_id))) {
         throw new Error('El rol especificado no existe');
       }
-      // Gym: NO validar (según lo solicitado). Si no existe, conservar el actual o dejar NULL si es update de admin sin gym previo.
-      if (SKIP_GYM_VALIDATION_FOR_ADMIN && 'gym_id' in payload) {
+      if ('gym_id' in payload) {
         if (payload.gym_id != null && !(await GymRepository.existsById(payload.gym_id))) {
-          // Si el admin mandó un gym inválido, preferimos no romper:
-          // 1) si había uno previo, lo conservamos
-          // 2) si no había, lo dejamos en null
           payload.gym_id = current.gym_id ?? null;
-        }
-      } else if ('gym_id' in payload) {
-        if (payload.gym_id != null && !(await GymRepository.existsById(payload.gym_id))) {
-          throw new Error('El gimnasio especificado no existe');
         }
       }
     }
 
-    return UserRepository.update(id, payload);
+    const updated = await UserRepository.update(id, payload);
+
+    const pageFor = await UserRepository.getPageForId(updated.id, listParams);
+    const list = await this.list({ ...listParams, page: pageFor }, currentUser);
+    return { ...list, stickyId: updated.id };
   }
 
-  // DELETE (y devolver lista recalculada)
+  // DELETE con recalculo de página
   static async removeAndReturnPage(id, listParams, currentUser) {
-    // Admin y Owner: no autoeliminarse
     if (Number(id) === Number(currentUser.id)) {
       throw new Error(isAdmin(currentUser)
         ? 'El administrador no puede eliminarse a sí mismo'
@@ -138,10 +118,7 @@ class UserService {
       if (currentUser?.gym_id && victim.gym_id !== currentUser.gym_id) {
         throw new Error('No autorizado para eliminar usuarios de otro gimnasio');
       }
-      // Si quieres limitar a Owner a borrar solo STAFF, descomenta:
-      // if (victim.role_id !== ROLE_IDS.STAFF) throw new Error('Solo puedes eliminar usuarios con rol Staff');
     }
-    // Admin: sin otras validaciones (no validamos gym en delete)
 
     await UserRepository.destroy(id);
 
