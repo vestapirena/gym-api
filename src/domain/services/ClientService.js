@@ -1,16 +1,22 @@
-// /src/domain/services/ClientService.js
-/**
- * Servicio: Clientes
- * - Admin: CRUD todos los gyms (gym_id requerido y validado).
- * - Owner: CRUD solo su gym (gym_id forzado).
- * - Respuestas sticky en create/update.
- */
+// src/domain/services/ClientService.js
+
+const sequelize = require('../../infrastructure/database/sequelize.config');
 const ClientRepository = require('../repositories/ClientRepository');
 const GymRepository    = require('../repositories/GymRepository');
+const ClientSequenceRepository = require('../repositories/ClientSequenceRepository');
 
 function isAdmin(user) {
   const r = (user?.role || '').toLowerCase();
   return r === 'admin' || r === 'administrator';
+}
+
+// Normaliza: si mandan "2" → "0002"
+function normalizeCode(code) {
+  const raw = String(code || '').trim();
+  if (/^\d+$/.test(raw) && raw.length < 4) {
+    return raw.padStart(4, '0');
+  }
+  return raw;
 }
 
 class ClientService {
@@ -26,21 +32,47 @@ class ClientService {
     return data;
   }
 
-  static async createAndReturnPage(payload, listParams, currentUser) {
-    // gym objetivo
+  // ✅ NUEVO: buscar cliente por código sin paginación
+  static async getByCode(code, gymIdFromQuery, currentUser) {
+    const codeNorm = normalizeCode(code);
+
     let targetGymId;
-    if (!isAdmin(currentUser)) {
+    if (isAdmin(currentUser)) {
+      if (!gymIdFromQuery) {
+        throw new Error('gym_id es obligatorio para admin al buscar por código');
+      }
+      targetGymId = gymIdFromQuery;
+      if (!(await GymRepository.existsById(targetGymId))) {
+        throw new Error('El gimnasio especificado no existe');
+      }
+    } else {
       if (!currentUser?.gym_id) throw new Error('No tienes gimnasio asignado');
       targetGymId = currentUser.gym_id;
-    } else {
+    }
+
+    const found = await ClientRepository.findByGymAndCode(targetGymId, codeNorm);
+    if (!found) throw new Error('Cliente no encontrado para ese código');
+    return found;
+  }
+
+  static async createAndReturnPage(payload, listParams, currentUser) {
+    let targetGymId;
+    if ((currentUser?.role || '').toLowerCase().includes('admin')) {
       if (payload.gym_id == null) throw new Error('gym_id es obligatorio para crear clientes');
       if (!(await GymRepository.existsById(payload.gym_id))) throw new Error('El gimnasio especificado no existe');
       targetGymId = payload.gym_id;
+    } else {
+      if (!currentUser?.gym_id) throw new Error('No tienes gimnasio asignado');
+      targetGymId = currentUser.gym_id;
     }
 
-    // creación simple (sin secuencias ni transacción)
-    payload.gym_id = targetGymId;
-    const created = await ClientRepository.create(payload);
+    const created = await sequelize.transaction(async (t) => {
+      payload.gym_id = targetGymId;
+      const next = await ClientSequenceRepository.nextForGym(targetGymId, t);
+      payload.code = String(next).padStart(4, '0');
+      const row = await ClientRepository.create(payload, t);
+      return row;
+    });
 
     const pageFor = await ClientRepository.getPageForId(created.id, listParams);
     const list = await this.list({ ...listParams, page: pageFor }, currentUser);
@@ -56,8 +88,16 @@ class ClientService {
         throw new Error('No autorizado para modificar clientes de otro gimnasio');
       }
       if ('gym_id' in payload) delete payload.gym_id;
-    } else if ('gym_id' in payload) {
-      if (!(await GymRepository.existsById(payload.gym_id))) payload.gym_id = current.gym_id;
+      if ('code' in payload)   delete payload.code;
+      if ('email' in payload)  delete payload.email;
+    } else {
+      if ('code' in payload)  delete payload.code;
+      if ('email' in payload) delete payload.email;
+      if ('gym_id' in payload) {
+        if (!(await GymRepository.existsById(payload.gym_id))) {
+          payload.gym_id = current.gym_id;
+        }
+      }
     }
 
     const updated = await ClientRepository.update(id, payload);

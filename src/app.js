@@ -13,6 +13,9 @@ const usersRoutes  = require('./app/routes/users.routes');
 const gymRoutes    = require('./app/routes/gyms.routes');
 const planRoutes   = require('./app/routes/plans.routes');
 const clientRoutes = require('./app/routes/clients.routes');
+const membershipRoutes = require('./app/routes/memberships.routes');
+const paymentRoutes = require('./app/routes/payments.routes');
+const attendanceRoutes = require('./app/routes/attendance.routes');
 
 const validateToken = require('./app/middlewares/validateToken');
 const probe         = require('./app/middlewares/reqProbe');
@@ -31,6 +34,9 @@ app.use('/api/users',  usersRoutes);
 app.use('/api/gyms',   gymRoutes);
 app.use('/api/plans',  planRoutes);
 app.use('/api/clients', clientRoutes);
+app.use('/api/memberships', membershipRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 

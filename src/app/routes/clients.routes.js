@@ -1,9 +1,11 @@
-// /src/app/routes/clients.routes.js
+// src/app/routes/clients.routes.js
+
 /**
  * Rutas: Clientes
- *   GET    /api/clients            (admin: todos; owner: su gym)
- *   POST   /api/clients            (admin: cualquier gym; owner: su gym)
- *   PUT    /api/clients/:id        (admin puede cambiar gym; owner no)
+ *   GET    /api/clients
+ *   GET    /api/clients/by-code/:code   ✅ NUEVO (buscar por código)
+ *   POST   /api/clients
+ *   PUT    /api/clients/:id
  *   DELETE /api/clients/:id
  */
 const express = require('express');
@@ -17,7 +19,18 @@ const ClientController = require('../controllers/ClientController');
 
 const router = express.Router();
 
-router.get('/',    validateToken, checkRole('admin','Administrator','Gym Owner'), ClientController.list);
+// ✅ NUEVO: buscar por código (admin: requiere gym_id; owner: usa su gym)
+router.get('/by-code/:code',
+  validateToken,
+  checkRole('admin','Administrator','Gym Owner','Staff'),
+  ClientController.getByCode
+);
+
+router.get('/',
+  validateToken,
+  checkRole('admin','Administrator','Gym Owner'),
+  ClientController.list
+);
 
 router.post('/',
   validateToken,
@@ -32,7 +45,6 @@ router.put('/:id',
   checkRole('admin','Administrator','Gym Owner'),
   enforceClientUpdatePolicy(),
   validateBody(updateClientSchema),
-  // (email se removió; no hace falta checar unicidad en update)
   ClientController.update
 );
 

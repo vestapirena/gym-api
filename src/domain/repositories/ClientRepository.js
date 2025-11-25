@@ -1,7 +1,4 @@
-// /src/domain/repositories/ClientRepository.js
-/**
- * Repositorio: Clients (CRUD + sticky)
- */
+// src/domain/repositories/ClientRepository.js
 const { Op } = require('sequelize');
 const { Client, Gym } = require('../../infrastructure/models');
 
@@ -21,35 +18,38 @@ function buildWhere({ q, status, gymId }) {
   return where;
 }
 
+function normalizeSort(sortBy = 'created_at') {
+  return sortBy === 'created_at' ? 'createdAt' : sortBy;
+}
+
 class ClientRepository {
-  static async findPaged({ page=1, limit=10, sortBy='createdAt', order='DESC', q, status, gymId }) {
+  static async findPaged({ page=1, limit=10, sortBy='created_at', order='DESC', q, status, gymId }) {
     const where = buildWhere({ q, status, gymId });
     const offset = (page - 1) * limit;
-
-    // normaliza por si llega 'created_at' desde el front
-    const sort = (sortBy === 'created_at' ? 'createdAt' : sortBy);
+    const sort = normalizeSort(sortBy);
     const ord  = (order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     const { rows, count } = await Client.findAndCountAll({
       where,
       include: [{ model: Gym, as: 'gym', attributes: ['id','name'] }],
       order: [[sort, ord], ['id','ASC']],
-      limit,
-      offset,
+      limit, offset,
     });
 
     const totalPages = Math.max(1, Math.ceil(count / limit));
-    return { items: rows, meta: { page, limit, total: count, totalPages, sortBy: sort, order: ord } };
+    return { items: rows, meta: { page, limit, total: count, totalPages, sortBy, order } };
   }
 
   static async create(data, transaction = undefined) {
     const created = await Client.create(data, { transaction });
+    if (transaction) return this.findById(created.id, transaction);
     return this.findById(created.id);
   }
 
-  static async findById(id) {
+  static async findById(id, transaction = undefined) {
     return Client.findByPk(id, {
       include: [{ model: Gym, as: 'gym', attributes: ['id','name'] }],
+      transaction,
     });
   }
 
@@ -62,25 +62,20 @@ class ClientRepository {
     return Client.destroy({ where: { id } });
   }
 
-  static async getPageForId(id, { limit=10, sortBy='createdAt', order='DESC', q, status, gymId }) {
-    const item = await Client.findByPk(id, {
-      attributes: ['id','createdAt','first_name','last_name','email'],
-    });
+  static async getPageForId(id, { limit=10, sortBy='created_at', order='DESC', q, status, gymId }) {
+    const s = normalizeSort(sortBy);
+    const ord = (order || 'DESC').toUpperCase();
+
+    const item = await Client.findByPk(id, { attributes: ['id', s] });
     if (!item) return 1;
 
     const whereBase = buildWhere({ q, status, gymId });
-    const s   = (sortBy === 'created_at' ? 'createdAt' : sortBy);
-    const ord = (order || 'DESC').toUpperCase();
 
     const opMain = ord === 'ASC' ? Op.lt : Op.gt;
-    const countMain = await Client.count({
-      where: { ...whereBase, [s]: { [opMain]: item.get(s) } },
-    });
+    const countMain = await Client.count({ where: { ...whereBase, [s]: { [opMain]: item.get(s) } } });
 
     const opTie = ord === 'ASC' ? Op.lt : Op.gt;
-    const countTie = await Client.count({
-      where: { ...whereBase, [s]: item.get(s), id: { [opTie]: item.id } },
-    });
+    const countTie = await Client.count({ where: { ...whereBase, [s]: item.get(s), id: { [opTie]: item.id } } });
 
     const before = countMain + countTie;
     return Math.floor(before / limit) + 1;
@@ -92,10 +87,16 @@ class ClientRepository {
   }
 
   static async existsEmailExcludingId(email, excludeId) {
-    const found = await Client.findOne({
-      where: { email, id: { [Op.ne]: excludeId } },
-    });
+    const found = await Client.findOne({ where: { email, id: { [Op.ne]: excludeId } } });
     return !!found;
+  }
+
+  // ✅ NUEVO: buscar cliente por gym + code
+  static async findByGymAndCode(gymId, code) {
+    return Client.findOne({
+      where: { gym_id: gymId, code },
+      include: [{ model: Gym, as:'gym', attributes:['id','name'] }],
+    });
   }
 }
 
