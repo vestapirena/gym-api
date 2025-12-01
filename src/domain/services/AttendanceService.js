@@ -6,10 +6,10 @@
  * - checked_in_at SIEMPRE lo calcula el backend (FE no lo manda)
  */
 const { Op } = require('sequelize');
-const { ClientMembership } = require('../../infrastructure/models');
 
 const AttendanceRepository = require('../repositories/AttendanceRepository');
 const ClientRepository = require('../repositories/ClientRepository');
+const { ClientMembership, Gym } = require('../../infrastructure/models');
 
 function isAdmin(user) {
   const r = (user?.role || '').toLowerCase();
@@ -17,31 +17,73 @@ function isAdmin(user) {
 }
 
 class AttendanceService {
-  static async list(params, currentUser) {
+  static async list(params, currentUser, includeRefs = false) {
     const listParams = { ...params };
+
+    // Owner / Staff: se fuerza al gym del usuario
     if (!isAdmin(currentUser) && currentUser?.gym_id) {
       listParams.gymId = currentUser.gym_id;
     }
-    return AttendanceRepository.findPaged(listParams);
+
+    const pageData = await AttendanceRepository.findPaged(listParams);
+
+    if (!includeRefs) {
+      return pageData;
+    }
+
+    // Catálogo de gimnasios para el FE
+    const refs = {};
+
+    if (isAdmin(currentUser)) {
+      const gyms = await Gym.findAll({
+        attributes: ['id', 'name'],
+        order: [['name', 'ASC']],
+      });
+      refs.gyms = gyms;
+    } else if (currentUser?.gym_id) {
+      const gym = await Gym.findByPk(currentUser.gym_id, {
+        attributes: ['id', 'name'],
+      });
+      refs.gyms = gym ? [gym] : [];
+    } else {
+      refs.gyms = [];
+    }
+
+    return { ...pageData, refs };
   }
 
   static async createAndReturnPage(payload, listParams, currentUser) {
     const now = new Date();
 
+    // clonamos listParams para no mutar el original inesperadamente
+    const paramsForList = { ...listParams };
+
     // gym por rol
     let targetGymId;
     if (isAdmin(currentUser)) {
-      if (!payload.gym_id) throw new Error('gym_id es obligatorio para administrador');
+      if (!payload.gym_id) {
+        throw new Error('gym_id es obligatorio para administrador');
+      }
       targetGymId = Number(payload.gym_id);
     } else {
-      if (!currentUser?.gym_id) throw new Error('No tienes gimnasio asignado');
+      if (!currentUser?.gym_id) {
+        throw new Error('No tienes gimnasio asignado');
+      }
       targetGymId = currentUser.gym_id;
     }
 
+    // 👇 aseguramos que la página que devolvemos está filtrada a ese gym
+    paramsForList.gymId = targetGymId;
+
     // buscar cliente por gym + code
-    const client = await ClientRepository.findByGymAndCode(targetGymId, payload.code);
+    const client = await ClientRepository.findByGymAndCode(
+      targetGymId,
+      payload.code
+    );
     if (!client) {
-      throw new Error(`Cliente con código ${payload.code} no existe en este gimnasio`);
+      throw new Error(
+        `Cliente con código ${payload.code} no existe en este gimnasio`
+      );
     }
 
     // si cliente inactivo => NO guardar
@@ -52,35 +94,39 @@ class AttendanceService {
     // validar vigencia directo en ClientMembership
     const activeMembership = await ClientMembership.findOne({
       where: {
-        gym_id:   targetGymId,
+        gym_id: targetGymId,
         client_id: client.id,
-        status:   'Active',
+        status: 'Active',
         start_date: { [Op.lte]: now },
-        end_date:   { [Op.gte]: now },
+        end_date: { [Op.gte]: now },
       },
       order: [['end_date', 'DESC']],
     });
 
-    // si NO hay vigencia => NO guardar
     if (!activeMembership) {
       throw new Error('No tiene membresía vigente');
     }
 
-    // ✅ El backend decide la fecha/hora real del check-in
     const checkedInAt = now;
 
     const created = await AttendanceRepository.create({
-      gym_id:              targetGymId,
-      client_id:           client.id,
+      gym_id: targetGymId,
+      client_id: client.id,
       client_membership_id: activeMembership.id,
-      checked_in_at:       checkedInAt,
-      was_allowed:         1,
-      reason:              payload.reason || null, // nota libre
-      created_by:          currentUser?.id || null,
+      checked_in_at: checkedInAt,
+      was_allowed: 1,
+      reason: payload.reason || null,
+      created_by: currentUser?.id || null,
     });
 
-    const pageFor = await AttendanceRepository.getPageForId(created.id, listParams);
-    const list    = await this.list({ ...listParams, page: pageFor }, currentUser);
+    const pageFor = await AttendanceRepository.getPageForId(
+      created.id,
+      paramsForList
+    );
+    const list = await this.list(
+      { ...paramsForList, page: pageFor },
+      currentUser
+    );
 
     return { ...list, stickyId: created.id };
   }

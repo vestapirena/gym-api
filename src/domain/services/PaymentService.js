@@ -13,6 +13,7 @@ const { Membership, Client } = require('../../infrastructure/models');
 
 const PaymentRepository = require('../repositories/PaymentRepository');
 const ClientMembershipRepository = require('../repositories/ClientMembershipRepository');
+const GymRepository = require('../repositories/GymRepository');
 
 function isAdmin(user) {
   const r = (user?.role || '').toLowerCase();
@@ -32,9 +33,22 @@ function addPeriod(startDate, unit, value) {
 
 class PaymentService {
   static async list(params, currentUser) {
-    const listParams = { ...params };
-    if (!isAdmin(currentUser) && currentUser?.gym_id) listParams.gymId = currentUser.gym_id;
-    return PaymentRepository.findPaged(listParams);
+    const { includeRefs, ...listParams } = params;           // 👈 separar includeRefs
+
+    // Si no es admin, se fuerza a su gym_id
+    if (!isAdmin(currentUser) && currentUser?.gym_id) {
+      listParams.gymId = currentUser.gym_id;
+    }
+
+    const data = await PaymentRepository.findPaged(listParams);
+
+    // Solo admin + includeRefs=1 → devolver catálogo de gimnasios
+    if (includeRefs && isAdmin(currentUser)) {
+      const gyms = await GymRepository.findAllSimple();
+      return { ...data, refs: { gyms } };
+    }
+
+    return data;
   }
 
   static async createAndReturnPage(payload, listParams, currentUser) {

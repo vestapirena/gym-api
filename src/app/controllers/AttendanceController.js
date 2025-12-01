@@ -11,6 +11,7 @@ function qp(qs = {}) {
     order,
     q,
     gymId,
+    gym_id,   // 👈 soporta también gym_id
     clientId,
     wasAllowed,
     from,
@@ -19,25 +20,38 @@ function qp(qs = {}) {
     date,       // ✅ nueva fecha única opcional
   } = qs;
 
+  // normalizamos gymId / gym_id
+  const gymIdRaw = gymId != null ? gymId : gym_id;
+
   return {
     page: Number(page) || 1,
     limit: Math.min(Number(limit) || 10, 100),
     sortBy: sortBy || order_by || 'checked_in_at',
     order: (order || 'DESC').toUpperCase(),
     q,
-    gymId,
+    gymId: gymIdRaw ? Number(gymIdRaw) : undefined,
     clientId,
-    wasAllowed: wasAllowed !== undefined ? Number(wasAllowed) : undefined,
+    wasAllowed:
+      wasAllowed !== undefined && wasAllowed !== ''
+        ? Number(wasAllowed)
+        : undefined,
     from,
     to,
-    date,      // se pasa tal cual al service/repository
+    date, // se pasa tal cual al service/repository
   };
 }
 
 class AttendanceController {
   static async list(req, res) {
     try {
-      const data = await AttendanceService.list(qp(req.query), req.user);
+      const params = qp(req.query);
+
+      const includeRefs =
+        req.query.includeRefs === '1' ||
+        req.query.includeRefs === 'true' ||
+        req.query.includeRefs === 'yes';
+
+      const data = await AttendanceService.list(params, req.user, includeRefs);
       return res.json(data);
     } catch (e) {
       return res.status(400).json({ error: e.message });

@@ -51,20 +51,37 @@ class PlanRepository {
   }
 
   // Sticky page calculator
-  static async getPageForId(id, { limit=10, sortBy='created_at', order='DESC', q }) {
-    const item = await Plan.findByPk(id, { attributes: ['id','name','created_at', 'description', 'price_net'] });
-    if (!item) return 1;
+// /src/domain/repositories/PlanRepository.js
+static async getPageForId(id, { limit = 10, sortBy = 'created_at', order = 'DESC', q }) {
+  // Traemos el registro completo, sin limitar atributos
+  const item = await Plan.findByPk(id);
+  if (!item) return 1;
 
-    const whereBase = buildWhere(q);
-    const opMain = order.toUpperCase() === 'ASC' ? Op.lt : Op.gt;
-    const countMain = await Plan.count({ where: { ...whereBase, [sortBy]: { [opMain]: item.get(sortBy) } } });
+  const whereBase = buildWhere(q);
+  const ord = (order || 'DESC').toUpperCase();
+  const col = sortBy || 'created_at';
 
-    const opTie = order.toUpperCase() === 'ASC' ? Op.lt : Op.gt;
-    const countTie = await Plan.count({ where: { ...whereBase, [sortBy]: item.get(sortBy), id: { [opTie]: item.id } } });
+  const opMain = ord === 'ASC' ? Op.lt : Op.gt;
+  const countMain = await Plan.count({
+    where: {
+      ...whereBase,
+      [col]: { [opMain]: item.get(col) },
+    },
+  });
 
-    const before = countMain + countTie;
-    return Math.floor(before / limit) + 1;
-  }
+  const opTie = ord === 'ASC' ? Op.lt : Op.gt;
+  const countTie = await Plan.count({
+    where: {
+      ...whereBase,
+      [col]: item.get(col),
+      id: { [opTie]: item.id },
+    },
+  });
+
+  const before = countMain + countTie;
+  return Math.floor(before / limit) + 1;
+}
+
 
   // Para selects simples si llegas a necesitarlos
   static async findAllSimple() {

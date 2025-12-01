@@ -1,6 +1,10 @@
 // src/app/middlewares/validateBody.js
 const validateBody = (schema) => async (req, res, next) => {
   try {
+    if (!schema || typeof schema.validateAsync !== 'function') {
+      throw new Error('Schema inválido en validateBody (no tiene validateAsync)');
+    }
+
     const value = await schema.validateAsync(req.body, {
       abortEarly: false,
       stripUnknown: true,
@@ -10,7 +14,7 @@ const validateBody = (schema) => async (req, res, next) => {
     next();
   } catch (err) {
     if (err.isJoi) {
-      const details = err.details.map(d => ({
+      const details = err.details.map((d) => ({
         path: d.path.join('.'),
         message: d.message,
       }));
