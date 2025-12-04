@@ -4,6 +4,7 @@
  * Rutas: Clientes
  *   GET    /api/clients
  *   GET    /api/clients/by-code/:code   ✅ NUEVO (buscar por código)
+ *   GET    /api/clients/search
  *   POST   /api/clients
  *   PUT    /api/clients/:id
  *   DELETE /api/clients/:id
@@ -19,7 +20,12 @@ const ClientController = require('../controllers/ClientController');
 
 const router = express.Router();
 
-// ✅ NUEVO: buscar por código (admin: requiere gym_id; owner: usa su gym)
+router.get('/search',
+  validateToken,
+  checkRole('admin','Administrator','Gym Owner','Staff'),
+  ClientController.search
+);
+
 router.get('/by-code/:code',
   validateToken,
   checkRole('admin','Administrator','Gym Owner','Staff'),
